@@ -26,7 +26,8 @@ atrasar() {
     sleep 1
     b=$(bloco_atual "$PORTA_BOOT")
     [ -n "$b" ] && [ -n "$b0" ] && [ $((b - b0)) -ge "$n" ] && break
-    (( SECONDS - inicio >= 900 )) && break   # trava de segurança: a rede deveria seguir sem os nós congelados
+    # trava de segurança: a rede deveria seguir sem os nós congelados (cerca de 6 s por bloco, no pior caso)
+    (( SECONDS - inicio >= 60 + 15 * n )) && break
   done
   (cd "$SN" && docker compose unpause "$@") >/dev/null 2>&1
   echo $((SECONDS - inicio))

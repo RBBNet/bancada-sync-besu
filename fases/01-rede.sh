@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # Fase 01: cria chaves, gênesis e configuração dos nós com o rbb-cli do start-network (roteiro de rede
-# de teste da RBB, seções 1 a 3) e sobe a rede inteira: 4 validadores, boot e writer. Confere o
-# procedimento de thread dump e liga a carga de transações. Resultado: estado E0.
+# de teste da RBB, seções 1 a 3) e sobe a rede: o validator primeiro, como no roteiro, depois os
+# outros nós; validator2 a validator4 entram no consenso por votação. Confere o procedimento de
+# thread dump e liga a carga de transações. Resultado: estado E0.
+#
+# Por que o validator sobe sozinho primeiro: com o permissionamento on-chain ligado, um nó Besu que
+# ainda não sincronizou recusa conexões de entrada (SyncStatusNodePermissioningProvider). Uma rede
+# que nasce com 4 validadores sem pares nunca produz o bloco 1, ninguém sincroniza e ninguém conecta.
 
 fase "Fase 01: rede QBFT com 4 validadores, boot e writer (estado E0)"
 ESTADO_ATUAL="montagem→E0"
@@ -10,14 +15,14 @@ rbbcli() { em "$SN" executar "rbb-cli $*" ./rbb-cli "$@"; }
 passo "Roteiro 1.3: chaves dos nós"
 rbbcli node create "${NOS// /,}"
 for n in $NOS; do fato "no.$n.chave_publica" "$(cat "$SN/.env.configs/nodes/$n/key.pub")"; done
-desvio "4 validadores em vez de 1: com 4, a rede continua produzindo blocos (quórum de 3) enquanto um validador está congelado, como na rede real"
+desvio "4 validadores em vez de 1 (os outros 3 entram por votação, qbft_proposeValidatorVote): com 4, a rede continua produzindo blocos (quórum de 3) enquanto um validador está congelado, como na rede real"
 
 passo "Roteiro 1.3: portas RPC no host"
 for n in $NOS; do rbbcli config set "nodes.$n.ports+=[\"$(porta "$n"):8545\"]"; done
 desvio "portas RPC $PORTA_VALIDATOR a $PORTA_VALIDATOR4 em vez de 10001 em diante, para não colidir com outras redes na mesma máquina"
 
-passo "Roteiro 2.1: genesis.json com os 4 validadores no extraData"
-rbbcli genesis create --validators validator,validator2,validator3,validator4
+passo "Roteiro 2.1: genesis.json com o validator no extraData"
+rbbcli genesis create --validators validator
 G="$SN/.env.configs/genesis.json"
 verificar G-01 "chainId do gênesis" "648629" "$(jq -r .config.chainId "$G")"
 verificar G-02 "período de bloco e timeout de rodada do QBFT (s)" "4 8" \
@@ -80,8 +85,13 @@ cp "$SN/infra.json" "$EXEC_DIR/infra.json"
 passo "Roteiro 3: renderizar templates e subir a rede"
 rbbcli config render-templates
 cp "$SN/docker-compose.yml" "$EXEC_DIR/docker-compose.yml"
-em "$SN" executar "subir todos os nós" docker compose up -d $NOS
-for n in $NOS; do esperar_ate "RPC de $n responder" 180 responde "$(porta "$n")" || abortar "$n não respondeu"; done
+em "$SN" executar "subir o validator" docker compose up -d validator
+esperar_ate "RPC do validator responder" 180 responde "$PORTA_VALIDATOR" || abortar "validator não respondeu"
+anda() { local b; b=$(bloco_atual "$PORTA_VALIDATOR"); [ -n "$b" ] && [ "$b" -ge 3 ]; }
+esperar_ate "validator produzir os primeiros blocos sozinho" 120 anda || abortar "o validator sozinho não produziu blocos"
+OUTROS="${NOS/validator /}"
+em "$SN" executar "subir os outros nós" docker compose up -d $OUTROS
+for n in $OUTROS; do esperar_ate "RPC de $n responder" 180 responde "$(porta "$n")" || abortar "$n não respondeu"; done
 
 CONSOLE=$(cd "$SN" && docker compose logs validator 2>/dev/null)
 verificar E0-01 "versão do Besu no validator" "besu/v${BESU}" \
@@ -91,15 +101,34 @@ verificar E0-02 "formato de armazenamento do validator" "$(echo "$FORMATO" | tr 
 verificar E0-03 "modo de sincronização do validator (padrão quando há arquivo de gênesis)" "full" \
   "$(grep -o 'Sync mode: [A-Za-z_]*' <<<"$CONSOLE" | head -1 | cut -d' ' -f3 | tr 'A-Z' 'a-z')"
 malha_completa() { local n; for n in $NOS; do tem_pares "$(porta "$n")" 5 || return 1; done; }
-esperar_ate "cada nó conectar aos outros 5" 180 malha_completa
+esperar_ate "cada nó conectar aos outros 5" 300 malha_completa
 verificar_que E0-04 "malha completa: cada nó com 5 pares" "5 pares em cada nó" \
   "$(for n in $NOS; do printf '%s=%s ' "$n" "$(pares "$(porta "$n")")"; done)" malha_completa
+malha_completa || abortar "a rede não formou a malha completa; sem ela as tentativas de sync não fazem sentido"
+
+passo "validator2 a validator4 entram no consenso por votação"
+endereco() { tr 'A-F' 'a-f' < "$SN/.env.configs/nodes/$1/node.id" | tr -d '[:space:]'; }
+validadores() { rpc "$PORTA_BOOT" qbft_getValidatorsByBlockNumber '["latest"]' | jq -r '.result[]' | tr 'A-F' 'a-f'; }
+eh_validador() { [ -n "$(validadores | grep -x "$1")" ]; }
+ATUAIS="validator"
+for novo in validator2 validator3 validator4; do
+  a=$(endereco "$novo")
+  fato "no.$novo.endereco" "$a"
+  # o voto só vale quando passa da metade dos validadores atuais; todos votam
+  for v in $ATUAIS; do rpc "$(porta "$v")" qbft_proposeValidatorVote "[\"$a\", true]" >/dev/null; done
+  esperar_ate "$novo entrar no conjunto de validadores" 120 eh_validador "$a" || abortar "$novo não entrou no conjunto de validadores"
+  for v in $ATUAIS; do rpc "$(porta "$v")" qbft_discardValidatorVote "[\"$a\"]" >/dev/null; done
+  ATUAIS="$ATUAIS $novo"
+done
+fato no.validator.endereco "$(endereco validator)"
+verificar E0-05 "conjunto de validadores" "4" "$(validadores | wc -l | tr -d ' ')" "$(validadores | jq -R . | jq -cs .)"
 b1=$(bloco_atual "$PORTA_BOOT"); sleep 20; b2=$(bloco_atual "$PORTA_BOOT")
-verificar_que E0-05 "rede produz blocos (QBFT, período de 4 s)" "avanço ≥ 4 blocos em 20 s" "$b1 → $b2" \
+verificar_que E0-06 "rede produz blocos com os 4 validadores (QBFT, período de 4 s)" "avanço ≥ 4 blocos em 20 s" "$b1 → $b2" \
   test $((b2 - b1)) -ge 4
+[ $((b2 - b1)) -ge 4 ] || abortar "a rede com 4 validadores não produz blocos"
 esperar_ate "todos os nós acompanharem o boot" 60 acompanha "$PORTA_BOOT" $(for n in $NOS; do porta "$n"; done)
 fato rede.hash_genesis "$(rpc "$PORTA_BOOT" eth_getBlockByNumber '["0x0",false]' | jq -r .result.hash)"
-verificar_que E0-06 "besu_bancada.log do validator registra o laço do full sync" "linha \"Waiting for peer matching filter\" presente" \
+verificar_que E0-07 "besu_bancada.log do validator registra o laço do full sync" "linha \"Waiting for peer matching filter\" presente" \
   "$(grep -c 'Waiting for peer matching filter' "$SN/volumes/validator/logs/besu_bancada.log" 2>/dev/null || true) linha(s)" \
   grep -q 'Waiting for peer matching filter' "$SN/volumes/validator/logs/besu_bancada.log"
 
@@ -125,7 +154,7 @@ txs_recentes() {
   echo "$t"
 }
 TXS=$(txs_recentes)
-verificar_que E0-07 "transações da carga entram em blocos" "≥ 1 transação nos últimos 6 blocos" \
+verificar_que E0-08 "transações da carga entram em blocos" "≥ 1 transação nos últimos 6 blocos" \
   "$TXS transação(ões); $(grep -c ENVIADA "$EXEC_DIR/carga.jsonl" 2>/dev/null || true) enviada(s) pela carga" \
   test "$TXS" -ge 1
 estado E0 "4 validadores, boot e writer em malha completa; Besu ${BESU}, ${FORMATO}; carga leve de transações"

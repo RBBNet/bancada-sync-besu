@@ -25,7 +25,11 @@ exato da trava só se descobre com um thread dump do nó travado, e é isso que 
 ## Como a bancada funciona
 
 1. **Monta a rede** com o [start-network](https://github.com/RBBNet/start-network) da RBB num commit
-   fixado: 4 validadores, boot e writer, Besu fixado por digest, gênesis e chaves sintéticos.
+   fixado: 4 validadores, boot e writer, Besu fixado por digest, gênesis e chaves sintéticos. Como no
+   roteiro, a rede nasce só com o `validator`; os outros nós sobem depois, e `validator2` a
+   `validator4` entram no consenso por votação. Com o permissionamento on-chain, um nó que ainda não
+   sincronizou recusa conexões de entrada, e uma rede que nascesse com 4 validadores sem pares nunca
+   produziria o primeiro bloco.
 2. **Liga uma carga leve de transações** (uma a cada 8 s), de contas aleatórias novas.
 3. **Faz tentativas de sync com os nós em regime.** Para cada espera de `ESPERAS_MIN` (padrão
    2, 5, 15, 30, 60 e 120 min), deixa a rede quieta durante a espera e depois congela os nós-alvo
@@ -92,9 +96,9 @@ evidências ficam anexadas como artefato.
 |---|---|
 | G-01, G-02 | chainId e parâmetros do QBFT do gênesis gerado pelo start-network |
 | E0-01 a E0-03 | versão do Besu, formato de armazenamento e modo de sincronização (full) |
-| E0-04, E0-05 | malha completa (5 pares por nó) e produção de blocos |
-| E0-06 | o log da bancada registra o laço do full sync (sem isso o detector não enxerga nada) |
-| E0-07 | as transações da carga entram em blocos |
+| E0-04 a E0-06 | malha completa (5 pares por nó), 4 validadores no consenso e produção de blocos |
+| E0-07 | o log da bancada registra o laço do full sync (sem isso o detector não enxerga nada) |
+| E0-08 | as transações da carga entram em blocos |
 | D-01, D-02 | o procedimento de thread dump funciona e não derruba o nó |
 | T01-01 | o gatilho exercita o caminho suspeito: cada alvo fez ao menos uma tentativa de sync |
 | T01-02 a T01-04 | se travou: dumps gravados, assinatura confirmada e nó que não se recupera de um atraso de 35 blocos. Se não travou: controle em que o validador se recupera |
