@@ -1,0 +1,5 @@
+# Configuração do gitleaks para este repositório.
+# A bancada não usa nenhuma chave privada fixa: as chaves dos nós são geradas a cada execução e a
+# carga de transações usa contas aleatórias novas. Por isso não há exceções à regra padrão.
+[extend]
+useDefault = true

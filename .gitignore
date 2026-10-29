@@ -1,0 +1,23 @@
+# Chaves e configurações locais: nunca versionar
+.env
+.env.*
+!.env.exemplo
+**/key
+**/key.pub
+*.key
+*.pem
+
+# Dados e logs de execução (vão para os artefatos do Actions, não para o Git)
+volumes/
+execucoes/
+logs/
+*.log
+
+# Dependências e compilação
+node_modules/
+artifacts/
+cache/
+typechain-types/
+
+# Sistema
+.DS_Store

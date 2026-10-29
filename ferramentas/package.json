@@ -1,0 +1,8 @@
+{
+  "name": "bancada-ferramentas",
+  "private": true,
+  "description": "Ferramentas da bancada (carga de transações)",
+  "dependencies": {
+    "ethers": "6.17.0"
+  }
+}

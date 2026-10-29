@@ -1,0 +1,55 @@
+name: Bancada
+
+# Execução completa da bancada numa máquina limpa do GitHub. O log de cada passo fica nesta
+# página, o resumo aparece no topo da execução e os arquivos de evidência (logs dos nós, thread
+# dumps, tentativas, comandos) ficam anexados como artefato.
+# Disparo somente manual: aba Actions → Bancada → Run workflow (ou gh workflow run bancada.yml --ref main).
+on:
+  workflow_dispatch:
+    inputs:
+      besu:
+        description: Versão do Besu dos nós
+        type: choice
+        options: ["25.5.0", "25.12.0"]
+        default: "25.5.0"
+      formato:
+        description: Formato de armazenamento
+        type: choice
+        options: [BONSAI, FOREST]
+        default: BONSAI
+      esperas_min:
+        description: Minutos de regime antes de cada tentativa provocada (separados por espaço)
+        type: string
+        default: "2 5 15 30 60 120"
+
+permissions:
+  contents: read
+
+jobs:
+  bancada:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Executar a bancada
+        env:
+          BESU: ${{ inputs.besu }}
+          FORMATO: ${{ inputs.formato }}
+          ESPERAS_MIN: ${{ inputs.esperas_min }}
+        run: ./executar.sh
+
+      - name: Anexar evidências da execução
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidencias-${{ github.run_number }}-besu${{ inputs.besu }}-${{ inputs.formato }}
+          path: |
+            execucoes/*/
+            !execucoes/*/trabalho/
+          retention-days: 90
+          if-no-files-found: warn
